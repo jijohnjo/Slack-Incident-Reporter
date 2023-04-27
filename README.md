@@ -1,4 +1,4 @@
-# Slack IncidentBot
+# Slack Incident Reporter
 
 Slack bot to report incidents
 
