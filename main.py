@@ -1,7 +1,8 @@
 import os
 import re
 import datetime
-from flask import Flask, request
+import requests
+from flask import Flask, request, jsonify
 from logging.config import dictConfig
 from dotenv import dotenv_values
 from slack_sdk import WebClient
@@ -23,6 +24,7 @@ GROUPS_TO_INVITE=env.get("GROUPS_TO_INVITE")
 CHANNEL_TO_POST_INCIDENT=env.get("CHANNEL_TO_POST_INCIDENT")
 INCIDENT_MAIN_MESSAGE=env.get("INCIDENT_MAIN_MESSAGE")
 GENERIC_ERROR_MESSAGE=env.get("GENERIC_ERROR_MESSAGE")
+AUTHORIZED_USERS=env.get("AUTHORIZED_USERS")
 
 dictConfig({
     'version': 1,
@@ -117,40 +119,124 @@ def get_similar_archived_channels(incident_channel_name):
     return similar
 
 def create_incident(text):
-    incident_channel_name=get_incident_channel_title(text)
+    incident_channel_name = get_incident_channel_title(text)
     app.logger.info(f"Incident channel name to be created: {incident_channel_name}")
-    channel_response=client.conversations_create(name=incident_channel_name)
-    channel_id=channel_response.get("channel").get("id")
+    channel_response = client.conversations_create(name=incident_channel_name)
+    channel_id = channel_response.get("channel").get("id")
     client.chat_postMessage(channel=f"#{incident_channel_name}", text=INCIDENT_MAIN_MESSAGE.format(text))
     app.logger.info(f"Incident channel created: {incident_channel_name} with ID {channel_id}")
     post_message_on_downtime_channel(text, channel_id)
     invite_groups_to_new_channel(channel_id)
-    similar=get_similar_archived_channels(incident_channel_name)
+    similar = get_similar_archived_channels(incident_channel_name)
     if len(similar) > 0:
-        client.chat_postMessage(channel=f"#{incident_channel_name}", text=RESPONSE_LIST_OF_INCIDENTS_TEMPLATE.format(', '.join(similar)))
-
+        client.chat_postMessage(channel=f"#{incident_channel_name}", text=RESPONSE_LIST_OF_INCIDENTS_TEMPLATE.format(', '.join(similar[:10])))
 
 app = Flask(__name__)
 
 @app.post("/")
 def open_incident():
-    app.logger.info("Openning a new incident")
+    app.logger.info("Opening a new incident")
     token = request.form.get("token")
-    channel_id=request.form.get("channel_id")
-    channel_name=request.form.get("channel_name")
+    channel_id = request.form.get("channel_id")
+    channel_name = request.form.get("channel_name")
+    user_id = request.form.get("user_id")
     user_name = request.form.get("user_name")
     text = request.form.get("text")
-    app.logger.info(f"Arguments: token={token} , channel_name={channel_name}, user_name={user_name}, text='{text}'")
+    app.logger.info(f"Arguments: token={token}, channel_name={channel_name}, user_id={user_id}, user_name={user_name}, text='{text}'")
 
-    try:
-       create_incident(text)
-    except Exception as e:
-       if "/incident failed with the error \"dispatch_failed\"" in str(e):
-           raise Exception(GENERIC_ERROR_MESSAGE)
-       else:
-           client.conversations_join(channel=channel_id)
-           client.chat_postMessage(channel='#{}'.format(channel_name), text='{}'.format(GENERIC_ERROR_MESSAGE))
-    return "Ok", 200
+    # Check if user is authorized
+    if user_id in AUTHORIZED_USERS:
+        try:
+            create_incident(text)
+        except Exception as e:
+            if "/incident failed with the error \"dispatch_failed\"" in str(e):
+                raise Exception(GENERIC_ERROR_MESSAGE)
+            else:
+                client.conversations_join(channel=channel_id)
+                client.chat_postMessage(channel='#{}'.format(channel_name), text='{}'.format(GENERIC_ERROR_MESSAGE))
+    else:
+        client.chat_postMessage(channel=user_id, text="Sorry!! you are not authorized to use this command. Please contact NetOps for assistance.")
+
+    return "Working on it", 200
+
+@app.route("/slack/events", methods=["POST"])
+def handle_event():
+    payload = request.json
+    
+    if payload.get("type") == "url_verification":
+        return jsonify({"challenge": payload["challenge"]})
+
+    if payload.get("event") and payload["event"]["type"] == "member_joined_channel":
+        user_id = payload["event"]["user"]
+        channel_id = payload["event"]["channel"]
+
+        channel_info = get_channel_info(channel_id)
+        if channel_info:
+            channel_name = channel_info["name"]
+            recap_message = find_last_recap_message(channel_id, channel_name)
+            if recap_message:
+                send_message(user_id, recap_message)
+
+    return jsonify({"status": "ok"})
+
+
+def get_channel_info(channel_id):
+    url = f"https://slack.com/api/conversations.info?channel={channel_id}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        data = response.json()
+        if data["ok"]:
+            return data["channel"]
+    return None
+
+
+def find_last_recap_message(channel_id, channel_name):
+    url = "https://slack.com/api/conversations.history"
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+    }
+    payload = {
+        "channel": channel_id,
+        "limit": 100,
+    }
+
+    response = requests.get(url, headers=headers, params=payload)
+
+    if response.status_code == 200:
+        data = response.json()
+        if data["ok"]:
+            for message in data["messages"]:
+                words = message["text"].split()
+                if words[0] in ["RECAP:", "Recap:"]:
+                   return f"```Here is the latest recap of {channel_name}:\n``` {message['text']}"
+    return None
+
+def send_message(user_id, message):
+    url = "https://slack.com/api/chat.postMessage"
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+    }
+    payload = {
+        "channel": f"@{user_id}",
+        "text": message,
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code == 200:
+        data = response.json()
+        if not data["ok"]:
+            app.logger.error(f"Error sending message: {data['error']}")
+    else:
+        app.logger.error(f"Error: {response.status_code}")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host='127.0.0.1', port=PORT)
