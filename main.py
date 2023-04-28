@@ -44,11 +44,11 @@ dictConfig({
 
 def get_date_time():
     now = datetime.datetime.now()
-    return now.strftime('%Y_%m_%d')
+    return now.strftime('%Y-%m-%d')
 
 def get_incident_channel_title(text):
     date=get_date_time()
-    snake_title=text.lower().replace(" ","_").replace("-", "_")[:60]
+    snake_title=text.lower().replace(" ","_")[:60]
     return f"{date}_{snake_title}"
 
 def post_message_on_downtime_channel(title,new_channel_id):
@@ -76,7 +76,11 @@ def invite_groups_to_new_channel(channel_id):
         client.conversations_invite(channel=channel_id,users=users_ids)
 
 def filter_archived_channels(channels):
-    return [x for x in channels.get("channels") if x.get("is_archived") == True and re.search('(\d{4}_\d{2}_\d{2}.+)', x.get("name")) is not None]
+    # Use list comprehension to filter channels
+    return [x for x in channels.get("channels")
+            if x.get("is_archived") == True 
+            and (re.search('(\d{4}-\d{2}-\d{2}.+)', x.get("name")) is not None
+                 or re.search('(\d{4}_\d{2}_\d{2}.+)', x.get("name")) is not None)]
 
 def remove_stop_words(list):
   stop_words=['ourselves', 'hers', 'between', 'yourself', 'but', 'again', 'there', 'about', 'once', 'during', 'out', 'very', 'having', 'with', 'they', 'own', 'an', 'be', 'some', 'for', 'do', 'its', 'yours', 'such', 'into', 'of', 'most', 'itself', 'other', 'off', 'is', 's', 'am', 'or', 'who', 'as', 'from', 'him', 'each', 'the', 'themselves', 'until', 'below', 'are', 'we', 'these', 'your', 'his', 'through', 'don', 'nor', 'me', 'were', 'her', 'more', 'himself', 'this', 'down', 'should', 'our', 'their', 'while', 'above', 'both', 'up', 'to', 'ours', 'had', 'she', 'all', 'no', 'when', 'at', 'any', 'before', 'them', 'same', 'and', 'been', 'have', 'in', 'will', 'on', 'does', 'yourselves', 'then', 'that', 'because', 'what', 'over', 'why', 'so', 'can', 'did', 'not', 'now', 'under', 'he', 'you', 'herself', 'has', 'just', 'where', 'too', 'only', 'myself', 'which', 'those', 'i', 'after', 'few', 'whom', 't', 'being', 'if', 'theirs', 'my', 'against', 'a', 'by', 'doing', 'it', 'how', 'further', 'was', 'here', 'than']
@@ -86,14 +90,15 @@ def remove_empty_string_from_list(list):
   return [x for x in list if x != '']
 
 def tokenize_title(title):
-  result=remove_empty_string_from_list(title.split("_"))
+  title = title.replace('-', '_')
+  result = remove_empty_string_from_list(title.split("_"))
   return remove_stop_words(result)
 
 def is_token_present(token,token_list):
   return token in token_list
 
 def filter_similar_titles(title1, title2):
-    regex='(\d{4}_\d{2}_\d{2})?(.+)'
+    regex='(\d{4}-\d{2}-\d{2})?(.+)|(\d{4}_\d{2}_\d{2})?(.+)'
     # to get just the string part, without the timestamp
     title1=re.search(regex, title1).group(2)
     title2=re.search(regex, title2).group(2)
@@ -119,17 +124,17 @@ def get_similar_archived_channels(incident_channel_name):
     return similar
 
 def create_incident(text):
-    incident_channel_name = get_incident_channel_title(text)
+    incident_channel_name=get_incident_channel_title(text)
     app.logger.info(f"Incident channel name to be created: {incident_channel_name}")
-    channel_response = client.conversations_create(name=incident_channel_name)
-    channel_id = channel_response.get("channel").get("id")
+    channel_response=client.conversations_create(name=incident_channel_name)
+    channel_id=channel_response.get("channel").get("id")
     client.chat_postMessage(channel=f"#{incident_channel_name}", text=INCIDENT_MAIN_MESSAGE.format(text))
     app.logger.info(f"Incident channel created: {incident_channel_name} with ID {channel_id}")
     post_message_on_downtime_channel(text, channel_id)
     invite_groups_to_new_channel(channel_id)
-    similar = get_similar_archived_channels(incident_channel_name)
+    similar=get_similar_archived_channels(incident_channel_name)
     if len(similar) > 0:
-        client.chat_postMessage(channel=f"#{incident_channel_name}", text=RESPONSE_LIST_OF_INCIDENTS_TEMPLATE.format(', '.join(similar[:10])))
+        client.chat_postMessage(channel=f"#{incident_channel_name}", text=RESPONSE_LIST_OF_INCIDENTS_TEMPLATE.format(', '.join(similar)))
 
 app = Flask(__name__)
 
@@ -152,8 +157,7 @@ def open_incident():
             if "/incident failed with the error \"dispatch_failed\"" in str(e):
                 raise Exception(GENERIC_ERROR_MESSAGE)
             else:
-                client.conversations_join(channel=channel_id)
-                client.chat_postMessage(channel='#{}'.format(channel_name), text='{}'.format(GENERIC_ERROR_MESSAGE))
+                client.chat_postMessage(channel=user_id, text=(GENERIC_ERROR_MESSAGE))
     else:
         client.chat_postMessage(channel=user_id, text="Sorry!! you are not authorized to use this command. Please contact NetOps for assistance.")
 
@@ -228,6 +232,18 @@ def send_message(user_id, message):
         "channel": f"@{user_id}",
         "text": message,
     }
+
+    response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code == 200:
+        data = response.json()
+        if not data["ok"]:
+            app.logger.error(f"Error sending message: {data['error']}")
+    else:
+        app.logger.error(f"Error: {response.status_code}")
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=PORT)
 
     response = requests.post(url, headers=headers, json=payload)
 
