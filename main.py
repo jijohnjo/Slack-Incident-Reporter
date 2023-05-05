@@ -48,7 +48,7 @@ def get_date_time():
 
 def get_incident_channel_title(text):
     date=get_date_time()
-    snake_title=text.lower().replace(" ","_")[:60]
+    snake_title=text.lower().replace(" ","_").replace("-", "_")[:60]
     return f"{date}_{snake_title}"
 
 def post_message_on_downtime_channel(title,new_channel_id):
@@ -92,6 +92,7 @@ def remove_empty_string_from_list(list):
 def tokenize_title(title):
   title = title.replace('-', '_')
   result = remove_empty_string_from_list(title.split("_"))
+  app.logger.info(f"Tokenize Result: {result}")
   return remove_stop_words(result)
 
 def is_token_present(token,token_list):
@@ -121,6 +122,7 @@ def get_similar_archived_channels(incident_channel_name):
     channels=client.conversations_list()
     archived_channels=filter_archived_channels(channels)
     similar=filter_similar_channels(incident_channel_name, archived_channels)
+    app.logger.info(f"Channel archived:{archived_channels}, Similar: {similar}")
     return similar
 
 def create_incident(text):
@@ -243,16 +245,4 @@ def send_message(user_id, message):
         app.logger.error(f"Error: {response.status_code}")
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=PORT)
-
-    response = requests.post(url, headers=headers, json=payload)
-
-    if response.status_code == 200:
-        data = response.json()
-        if not data["ok"]:
-            app.logger.error(f"Error sending message: {data['error']}")
-    else:
-        app.logger.error(f"Error: {response.status_code}")
-
-if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=PORT)
+    app.run(host='0.0.0.0', port=PORT)
