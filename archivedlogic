@@ -1,0 +1,99 @@
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+
+SLACK_BOT_TOKEN = "xoxb-4928XXXXXX-XXXXXX-XXXXXXXXXXXXXX"
+
+client = WebClient(token=SLACK_BOT_TOKEN)
+
+try:
+    # Call the conversations.list method using the WebClient
+    response = client.conversations_list()
+
+    channels = response["channels"]
+    cursor = response["response_metadata"]["next_cursor"]
+
+    # Retrieve all pages of results
+    while cursor:
+        response = client.conversations_list(cursor=cursor)
+        channels.extend(response["channels"])
+        cursor = response["response_metadata"]["next_cursor"]
+
+    # Filter the list to include only the archived channels
+    archived_channels = [channel for channel in channels if channel["is_archived"]]
+
+    # Print the names of the archived channels
+    for channel in archived_channels:
+        print(channel["name"])
+except SlackApiError as e:
+    print("Error: {}".format(e))
+
+
+
+
+def filter_archived_channels():
+    channels = []
+    cursor = None
+
+    try:
+        while True:
+            # Call the conversations.list method using the WebClient
+            response = client.conversations_list(cursor=cursor)
+
+            # Append the channels to the list
+            channels.extend(response["channels"])
+
+            # Check if there are more pages of results
+            if not response["response_metadata"]["next_cursor"]:
+                break
+
+            # Update the cursor to retrieve the next page of results
+            cursor = response["response_metadata"]["next_cursor"]
+
+        # Use list comprehension to filter channels
+        pattern = r'^(\d{4}-\d{2}-\d{2}|\d{4}_\d{2}_\d{2})'
+        filtered_channels = [x for x in channels
+                if x.get("is_archived") == True 
+                and re.search(pattern, x.get("name")) is not None]
+
+import re
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+
+SLACK_BOT_TOKEN = "xoxb-4928XXXXXX-XXXXXX-XXXXXXXXXXXXXX"
+client = WebClient(token=SLACK_BOT_TOKEN)
+
+
+
+def filter_archived_channels():
+    channels = []
+    cursor = None
+
+    try:
+        while True:
+            # Call the conversations.list method using the WebClient
+            response = client.conversations_list(cursor=cursor)
+
+            # Append the channels to the list
+            channels.extend(response["channels"])
+
+            # Check if there are more pages of results
+            if not response["response_metadata"]["next_cursor"]:
+                break
+
+            # Update the cursor to retrieve the next page of results
+            cursor = response["response_metadata"]["next_cursor"]
+            
+        # Use list comprehension to filter channels
+        pattern = r'^(\d{4}-\d{2}-\d{2}|\d{4}_\d{2}_\d{2})'
+        filtered_channels = [x for x in channels
+                if x.get("is_archived") == True 
+                and re.search(pattern, x.get("name")) is not None]
+
+        return filtered_channels
+
+    except SlackApiError as e:
+        print("Error: {}".format(e))
+
+
+
+
